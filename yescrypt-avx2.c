@@ -284,14 +284,16 @@ blockmix_salsa8(const salsa20_blk_t *restrict Bin,
 #define PWXFORM_X_T avx256
 #define PWXFORM_SIMD(X, x, s0, s1) \
 	x.ymm = _mm256_and_si256( X, X_MASK); \
-	s0.u64[0] = *(const uint64_t *)(S0 + x.u32[0]); \
-	s1.u64[0] = *(const uint64_t *)(S1 + x.u32[1]); \
-	s0.u64[1] = *(const uint64_t *)(S0 + x.u32[2]); \
-	s1.u64[1] = *(const uint64_t *)(S1 + x.u32[3]); \
-	s0.u64[2] = *(const uint64_t *)(S0 + x.u32[4]); \
-	s1.u64[2] = *(const uint64_t *)(S1 + x.u32[5]); \
-	s0.u64[3] = *(const uint64_t *)(S0 + x.u32[6]); \
-	s1.u64[3] = *(const uint64_t *)(S1 + x.u32[7]); \
+	s0.ymm = _mm256_set_epi64x( \
+		*(const uint64_t *)(S0 + x.u32[0]), \
+		*(const uint64_t *)(S0 + x.u32[2]), \
+		*(const uint64_t *)(S0 + x.u32[4]), \
+		*(const uint64_t *)(S0 + x.u32[6])); \
+	s1.ymm = _mm256_set_epi64x( \
+		*(const uint64_t *)(S0 + x.u32[1]), \
+		*(const uint64_t *)(S0 + x.u32[3]), \
+		*(const uint64_t *)(S0 + x.u32[5]), \
+		*(const uint64_t *)(S0 + x.u32[7])); \
 	X.ymm = _mm256_mul_epu32(HI32(X.ymm), X.ymm); \
 	X.ymm = _mm256_add_epi64(X.ymm, s0.ymm); \
 	X.ymm = _mm256_xor_si128(X.ymm, s1.ymm);
@@ -304,10 +306,7 @@ blockmix_salsa8(const salsa20_blk_t *restrict Bin,
 #define PWXFORM \
 	{ \
 		PWXFORM_X_T x0, x1; \
-		PWXFORM_X_T y0, y1; \
 		PWXFORM_X_T s00, s01, s10, s11; \
-		PWXFORM_X_T X_MASK; \
-		X_MASK.u64[0] = X_MASK.u64[1] = X_MASK.u64[2] = X_MASK.u64[3] = S_MASK2; \
 		PWXFORM_ROUND PWXFORM_ROUND \
 		PWXFORM_ROUND PWXFORM_ROUND \
 		PWXFORM_ROUND PWXFORM_ROUND \
@@ -333,6 +332,8 @@ blockmix(const salsa20_blk_t *restrict Bin, salsa20_blk_t *restrict Bout,
 	const uint8_t * S0, * S1;
 	avx256i X0, X1;
 	size_t i;
+	avx256i X_MASK;
+	X_MASK.u64[0] = X_MASK.u64[1] = X_MASK.u64[2] = X_MASK.u64[3] = S_MASK2;
 
 	if (!S) {
 		blockmix_salsa8(Bin, Bout, r);
@@ -460,6 +461,8 @@ blockmix_xor(const salsa20_blk_t *restrict Bin1,
 	const uint8_t * S0, * S1;
 	avx256i X0, X1;
 	size_t i;
+	avx256i X_MASK;
+	X_MASK.u64[0] = X_MASK.u64[1] = X_MASK.u64[2] = X_MASK.u64[3] = S_MASK2;
 
 	if (!S)
 		return blockmix_salsa8_xor(Bin1, Bin2, Bout, r, Bin2_in_ROM);
@@ -590,6 +593,8 @@ blockmix_xor_save(const salsa20_blk_t *restrict Bin1,
 	const uint8_t * S0, * S1;
 	avx256i X0, X1, Y0, Y1;
 	size_t i;
+	avx256i X_MASK;
+	X_MASK.u64[0] = X_MASK.u64[1] = X_MASK.u64[2] = X_MASK.u64[3] = S_MASK2;
 
 	if (!S)
 		return blockmix_salsa8_xor_save(Bin1, Bin2, Bout, r);
