@@ -1,5 +1,6 @@
 This is a multi-threaded CPU miner for Litecoin and Bitcoin,
 fork of Jeff Garzik's reference cpuminer.
+With experimental AVX2 code. No verification, DO NOT USE MINING.
 
 License: GPLv2.  See COPYING for details.
 
