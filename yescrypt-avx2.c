@@ -62,72 +62,68 @@
 #define PREFETCH_AVX2(x, hint) _mm_prefetch((const char *)(x), (hint));
 #define PREFETCH_AVX2_OUT(x, hint) /* disabled */
 
+__m256i PERMUTE_OFFSET1;//0x93xx -> 1001 0011 xxxx xxxx -> 2 1 0 3 3 2 1 0 -> 6 5 4 7 3 2 1 0
+__m256i PERMUTE_OFFSET2;//0x394e -> 0011 1001 0100 1110 -> 0 3 2 1 1 0 3 2 -> 4 7 6 5 1 0 3 2
+__m256i PERMUTE_OFFSET3;//0x39xx -> 0011 1001 xxxx xxxx -> 0 3 2 1 3 2 1 0 -> 4 7 6 5 3 2 1 0
+__m256i PERMUTE_OFFSET4;//0x934e -> 1001 0011 0100 1110 -> 2 1 0 3 1 0 3 2 -> 6 5 4 7 1 0 3 2
+
 #define ARX_AVX2(out, in1, in2, s) \
 	{ \
-		__m128i T = _mm_add_epi32(in1, in2); \
-		out = _mm_xor_si128(out, _mm_slli_epi32(T, s)); \
-		out = _mm_xor_si128(out, _mm_srli_epi32(T, 32-s)); \
+		__m256i T = _mm256_add_epi32(in1, in2); \
+		out = _mm256_xor_si256(out, _mm256_slli_epi32(T, s)); \
+		out = _mm256_xor_si256(out, _mm256_srli_epi32(T, 32-s)); \
 	}
 
 #define SALSA20_2ROUNDS_AVX2 \
 	/* Operate on "columns" */ \
-	ARX_AVX2(X0.xmm[1], X0.xmm[0], X1.xmm[1], 7) \
-	ARX_AVX2(X1.xmm[0], X0.xmm[1], X0.xmm[0], 9) \
-	ARX_AVX2(X1.xmm[1], X1.xmm[0], X0.xmm[1], 13) \
-	ARX_AVX2(X0.xmm[0], X1.xmm[1], X1.xmm[0], 18) \
+	ARX_AVX2(X0, X0, X1, 7) \
+	ARX_AVX2(X1, X0, X0, 9) \
+	ARX_AVX2(X1, X1, X0, 13) \
+	ARX_AVX2(X0, X1, X1, 18) \
 \
 	/* Rearrange data */ \
-	X0.xmm[1] = _mm_shuffle_epi32(X1.xmm[1], 0x93); \
-	X1.xmm[0] = _mm_shuffle_epi32(X1.xmm[0], 0x4E); \
-	X1.xmm[1] = _mm_shuffle_epi32(X1.xmm[1], 0x39); \
+	X0 = _mm256_permutevar8x32_epi32(X0, PERMUTE_OFFSET1); \
+	X1 = _mm256_permutevar8x32_epi32(X1, PERMUTE_OFFSET2); \
 \
 	/* Operate on "rows" */ \
-	ARX_AVX2(X1.xmm[1], X0.xmm[0], X0.xmm[1], 7) \
-	ARX_AVX2(X1.xmm[0], X1.xmm[1], X0.xmm[0], 9) \
-	ARX_AVX2(X0.xmm[1], X1.xmm[0], X1.xmm[1], 13) \
-	ARX_AVX2(X0.xmm[0], X0.xmm[1], X1.xmm[0], 18) \
+	ARX_AVX2(X1, X0, X0, 7) \
+	ARX_AVX2(X1, X1, X0, 9) \
+	ARX_AVX2(X0, X1, X1, 13) \
+	ARX_AVX2(X0, X0, X1, 18) \
 \
 	/* Rearrange data */ \
-	X0.xmm[1] = _mm_shuffle_epi32(X0.xmm[1], 0x39); \
-	X1.xmm[0] = _mm_shuffle_epi32(X1.xmm[0], 0x4E); \
-	X1.xmm[1] = _mm_shuffle_epi32(X1.xmm[1], 0x93);
+	X0 = _mm256_permutevar8x32_epi32(X0, PERMUTE_OFFSET3); \
+	X1 = _mm256_permutevar8x32_epi32(X1, PERMUTE_OFFSET4);
 
 #define SALSA20_8_BASE_AVX2(maybe_decl, out) \
 	{ \
-		maybe_decl Y0; \
-		Y0.xmm[0] = X0.xmm[0]; \
-		maybe_decl Y1; \
-		Y1.xmm[0] = X0.xmm[1]; \
-		maybe_decl Y2; \
-		Y2.xmm[0] = X1.xmm[0]; \
-		maybe_decl Y3; \
-		Y3.xmm[0] = X1.xmm[1]; \
+		maybe_decl Y0 = X0; \
+		maybe_decl Y1 = Y0; \
 		SALSA20_2ROUNDS_AVX2 \
 		SALSA20_2ROUNDS_AVX2 \
 		SALSA20_2ROUNDS_AVX2 \
 		SALSA20_2ROUNDS_AVX2 \
-		Y0.xmm[1] = Y1.xmm[0]; \
-		Y2.xmm[1] = Y3.xmm[0]; \
-		(out)[0].ymm = X0.ymm = _mm256_add_epi64(X0.ymm, Y0.ymm); \
-		(out)[1].ymm = X1.ymm = _mm256_add_epi64(X1.ymm, Y2.ymm); \
+		(out)[0] = X0 = _mm256_add_epi64(X0, Y0); \
+		(out)[1] = X1 = _mm256_add_epi64(X1, Y1); \
 	}
 #define SALSA20_8_AVX2(out) \
-	SALSA20_8_BASE_AVX2(avx256i, out)
+	SALSA20_8_BASE_AVX2(__m256i, out)
 
 /**
  * Apply the salsa20/8 core to the block provided in (X0 ... X3) ^ (Z0 ... Z3).
  */
 #define SALSA20_8_XOR_ANY_AVX2(maybe_decl, Z0, Z1, out) \
-	X0.ymm = _mm256_xor_si256(X0.ymm, Z0.ymm); \
-	X1.ymm = _mm256_xor_si256(X1.ymm, Z1.ymm); \
+	X0 = _mm256_xor_si256(X0, Z0); \
+	X1 = _mm256_xor_si256(X1, Z1); \
 	SALSA20_8_BASE_AVX2(maybe_decl, out)
 
 #define SALSA20_8_XOR_MEM_AVX2(in, out) \
-	SALSA20_8_XOR_ANY_AVX2(avx256i, (in)[0], (in)[1], out)
+	SALSA20_8_XOR_ANY_AVX2(__m256i, (in)[0], (in)[1], out)
 
 #define SALSA20_8_XOR_REG_AVX2(out) \
-	SALSA20_8_XOR_ANY_AVX2(avx256i, Y0, Y1, out)
+	SALSA20_8_XOR_ANY_AVX2(__m256i, Y0, Y1, out)
 
+/*
 typedef union {
 	uint64_t u64[4];
 	uint32_t u32[8];
@@ -135,11 +131,14 @@ typedef union {
 	__m256i ymm;
 	__m128i xmm[2];
 } avx256i;
+*/
+#define avx256i __m256i
 
 typedef union {
 	uint32_t w[16];
 	__m128i q[4];
-	avx256i dq[2];
+	__m256i dq[2];
+//	avx256i dq[2];//q[0],q[2],q[1],q[3]ÇÃèáÇ≈ì¸ÇÍÇÈ
 } salsa20_blk_t_avx2;
 
 /**
@@ -165,6 +164,14 @@ blockmix_salsa8_avx2(const salsa20_blk_t_avx2 *restrict Bin,
 	PREFETCH_AVX2(&Bin[r * 2], _MM_HINT_T0)
 	PREFETCH_AVX2_OUT(&Bout[r], _MM_HINT_T0)
 	PREFETCH_AVX2_OUT(&Bout[r * 2 + 1], _MM_HINT_T0)
+	//<add>
+	#if 1
+	PREFETCH_AVX2(&PERMUTE_OFFSET1, _MM_HINT_T0);
+	PREFETCH_AVX2(&PERMUTE_OFFSET2, _MM_HINT_T0);
+	PREFETCH_AVX2(&PERMUTE_OFFSET3, _MM_HINT_T0);
+	PREFETCH_AVX2(&PERMUTE_OFFSET4, _MM_HINT_T0);
+	#endif
+	//</add>
 
 	/* 1: X <-- B_{2r - 1} */
 	X0 = Bin[r * 2 + 1].dq[0];
@@ -233,20 +240,22 @@ avx256i YMM_MASK;
 
 #define PWXFORM_AVX2_T avx256i
 #define PWXFORM_SIMD_AVX2(X, x, s0, s1) \
-	x.ymm = _mm256_and_si256( X.ymm, YMM_MASK.ymm); \
-	s0.ymm = _mm256_set_epi64x( \
-		*(const uint64_t *)(S0 + x.u32[0]), \
-		*(const uint64_t *)(S0 + x.u32[2]), \
-		*(const uint64_t *)(S0 + x.u32[4]), \
-		*(const uint64_t *)(S0 + x.u32[6])); \
-	s1.ymm = _mm256_set_epi64x( \
-		*(const uint64_t *)(S0 + x.u32[1]), \
-		*(const uint64_t *)(S0 + x.u32[3]), \
-		*(const uint64_t *)(S0 + x.u32[5]), \
-		*(const uint64_t *)(S0 + x.u32[7])); \
-	X.ymm = _mm256_mul_epu32(HI32(X.ymm), X.ymm); \
-	X.ymm = _mm256_add_epi64(X.ymm, s0.ymm); \
-	X.ymm = _mm256_xor_si256(X.ymm, s1.ymm);
+	x = _mm256_and_si256( X, YMM_MASK); \
+	s0 = _mm256_permutevar8x32_epi32( \
+		x, \
+		_mm256_set_epi64x(6, 4 ,2 ,0)); \
+	s0 = _mm256_add_epi64( \
+		s0, \
+		_mm256_broadcastq_epi64( _mm_set_epi64x(0, *(const uint64_t *)S0))); \
+	s1 = _mm256_permutevar8x32_epi32( \
+		x, \
+		_mm256_set_epi64x(7, 5 ,3 ,1)); \
+	s1 = _mm256_add_epi64( \
+		s0, \
+		_mm256_broadcastq_epi64( _mm_set_epi64x(0, *(const uint64_t *)S1))); \
+	X = _mm256_mul_epu32(HI32(X), X); \
+	X = _mm256_add_epi64(X, s0); \
+	X = _mm256_xor_si256(X, s1);
 
 #define PWXFORM_ROUND_AVX2 \
 	PWXFORM_SIMD_AVX2(X0, x0, s00, s01) \
@@ -262,8 +271,8 @@ avx256i YMM_MASK;
 	}
 
 #define XOR4_AVX2(in) \
-	X0.ymm = _mm256_xor_si256(X0.ymm, (in)[0].ymm); \
-	X1.ymm = _mm256_xor_si256(X1.ymm, (in)[1].ymm);
+	X0 = _mm256_xor_si256(X0, (in)[0]); \
+	X1 = _mm256_xor_si256(X1, (in)[1]);
 
 #define OUTBLK(out) \
 	(out)[0] = X0; \
@@ -281,7 +290,6 @@ blockmix_avx2(const salsa20_blk_t_avx2 *restrict Bin, salsa20_blk_t_avx2 *restri
 	const uint8_t * S0, * S1;
 	avx256i X0, X1;
 	size_t i;
-	//avx256i X_MASK;
 
 	if (!S) {
 		blockmix_salsa8_avx2(Bin, Bout, r);
@@ -302,6 +310,15 @@ blockmix_avx2(const salsa20_blk_t_avx2 *restrict Bin, salsa20_blk_t_avx2 *restri
 		PREFETCH_AVX2_OUT(&Bout[i], _MM_HINT_T0)
 	}
 	PREFETCH_AVX2_OUT(&Bout[r], _MM_HINT_T0)
+	//<add>
+	#if 1
+	PREFETCH_AVX2(&YMM_MASK, _MM_HINT_T0)
+	PREFETCH_AVX2(&PERMUTE_OFFSET1, _MM_HINT_T0);
+	PREFETCH_AVX2(&PERMUTE_OFFSET2, _MM_HINT_T0);
+	PREFETCH_AVX2(&PERMUTE_OFFSET3, _MM_HINT_T0);
+	PREFETCH_AVX2(&PERMUTE_OFFSET4, _MM_HINT_T0);
+	#endif
+	//</add>
 
 	/* X <-- B_{r1 - 1} */
 	X0 = Bin[r].dq[0];
@@ -325,8 +342,8 @@ blockmix_avx2(const salsa20_blk_t_avx2 *restrict Bin, salsa20_blk_t_avx2 *restri
 }
 
 #define XOR4_2_AVX2(in1, in2) \
-	X0.ymm = _mm256_xor_si256((in1)[0].ymm, (in2)[0].ymm); \
-	X1.ymm = _mm256_xor_si256((in1)[1].ymm, (in2)[1].ymm);
+	X0 = _mm256_xor_si256((in1)[0], (in2)[0]); \
+	X1 = _mm256_xor_si256((in1)[1], (in2)[1]);
 
 static inline uint32_t
 blockmix_salsa8_xor_avx2(const salsa20_blk_t_avx2 *restrict Bin1,
@@ -365,6 +382,14 @@ blockmix_salsa8_xor_avx2(const salsa20_blk_t_avx2 *restrict Bin1,
 	PREFETCH_AVX2(&Bin1[r * 2], _MM_HINT_T0)
 	PREFETCH_AVX2_OUT(&Bout[r], _MM_HINT_T0)
 	PREFETCH_AVX2_OUT(&Bout[r * 2 + 1], _MM_HINT_T0)
+	//<add>
+	#if 1
+	PREFETCH_AVX2(&PERMUTE_OFFSET1, _MM_HINT_T0);
+	PREFETCH_AVX2(&PERMUTE_OFFSET2, _MM_HINT_T0);
+	PREFETCH_AVX2(&PERMUTE_OFFSET3, _MM_HINT_T0);
+	PREFETCH_AVX2(&PERMUTE_OFFSET4, _MM_HINT_T0);
+	#endif
+	//</add>
 
 	/* 1: X <-- B_{2r - 1} */
 	XOR4_2_AVX2(Bin1[r * 2 + 1].dq, Bin2[r * 2 + 1].dq)
@@ -398,7 +423,8 @@ blockmix_salsa8_xor_avx2(const salsa20_blk_t_avx2 *restrict Bin1,
 	XOR4_AVX2(Bin1[r * 2 + 1].dq)
 	SALSA20_8_XOR_MEM_AVX2(Bin2[r * 2 + 1].dq, Bout[r * 2 + 1].dq)
 
-	return X0.u32[0];
+	//return X0.u32[0];
+	return _mm256_extract_epi32( X0, 0);
 }
 
 static uint32_t
@@ -409,7 +435,6 @@ blockmix_xor_avx2(const salsa20_blk_t_avx2 *restrict Bin1,
 	const uint8_t * S0, * S1;
 	avx256i X0, X1;
 	size_t i;
-	//avx256i X_MASK;
 
 	if (!S)
 		return blockmix_salsa8_xor_avx2(Bin1, Bin2, Bout, r, Bin2_in_ROM);
@@ -439,6 +464,15 @@ blockmix_xor_avx2(const salsa20_blk_t_avx2 *restrict Bin1,
 		}
 	}
 	PREFETCH_AVX2_OUT(&Bout[r], _MM_HINT_T0);
+	//<add>
+	#if 1
+	PREFETCH_AVX2(&YMM_MASK, _MM_HINT_T0)
+	PREFETCH_AVX2(&PERMUTE_OFFSET1, _MM_HINT_T0);
+	PREFETCH_AVX2(&PERMUTE_OFFSET2, _MM_HINT_T0);
+	PREFETCH_AVX2(&PERMUTE_OFFSET3, _MM_HINT_T0);
+	PREFETCH_AVX2(&PERMUTE_OFFSET4, _MM_HINT_T0);
+	#endif
+	//</add>
 
 	/* X <-- B_{r1 - 1} */
 	XOR4_2_AVX2(Bin1[r].dq, Bin2[r].dq)
@@ -461,13 +495,14 @@ blockmix_xor_avx2(const salsa20_blk_t_avx2 *restrict Bin1,
 	/* B'_i <-- H(B'_i) */
 	SALSA20_8_AVX2(Bout[i].dq)
 
-	return X0.u32[0];
+	//return X0.u32[0];
+	return _mm256_extract_epi32( X0, 0);
 }
 
 #undef XOR4_AVX2
 #define XOR4_AVX2(in, out) \
-	(out)[0].ymm = Y0.ymm = _mm256_xor_si256((in)[0].ymm, (out)[0].ymm); \
-	(out)[1].ymm = Y1.ymm = _mm256_xor_si256((in)[1].ymm, (out)[1].ymm);
+	(out)[0] = Y0 = _mm256_xor_si256((in)[0], (out)[0]); \
+	(out)[1] = Y1 = _mm256_xor_si256((in)[1], (out)[1]);
 
 static inline uint32_t
 blockmix_salsa8_xor_save_avx2(const salsa20_blk_t_avx2 *restrict Bin1,
@@ -492,6 +527,14 @@ blockmix_salsa8_xor_save_avx2(const salsa20_blk_t_avx2 *restrict Bin1,
 	PREFETCH_AVX2(&Bin1[r * 2], _MM_HINT_T0)
 	PREFETCH_AVX2_OUT(&Bout[r], _MM_HINT_T0)
 	PREFETCH_AVX2_OUT(&Bout[r * 2 + 1], _MM_HINT_T0)
+	//<add>
+	#if 1
+	PREFETCH_AVX2(&PERMUTE_OFFSET1, _MM_HINT_T0);
+	PREFETCH_AVX2(&PERMUTE_OFFSET2, _MM_HINT_T0);
+	PREFETCH_AVX2(&PERMUTE_OFFSET3, _MM_HINT_T0);
+	PREFETCH_AVX2(&PERMUTE_OFFSET4, _MM_HINT_T0);
+	#endif
+	//</add>
 
 	/* 1: X <-- B_{2r - 1} */
 	XOR4_2_AVX2(Bin1[r * 2 + 1].dq, Bin2[r * 2 + 1].dq)
@@ -525,12 +568,13 @@ blockmix_salsa8_xor_save_avx2(const salsa20_blk_t_avx2 *restrict Bin1,
 	XOR4_AVX2(Bin1[r * 2 + 1].dq, Bin2[r * 2 + 1].dq)
 	SALSA20_8_XOR_REG_AVX2(Bout[r * 2 + 1].dq)
 
-	return X0.u32[0];
+	//return X0.u32[0];
+	return _mm256_extract_epi32( X0, 0);
 }
 
 #define XOR4_Y_AVX2 \
-	X0.ymm = _mm256_xor_si256(X0.ymm, Y0.ymm); \
-	X1.ymm = _mm256_xor_si256(X1.ymm, Y1.ymm);
+	X0 = _mm256_xor_si256(X0, Y0); \
+	X1 = _mm256_xor_si256(X1, Y1);
 
 static uint32_t
 blockmix_xor_save_avx2(const salsa20_blk_t_avx2 *restrict Bin1,
@@ -540,7 +584,6 @@ blockmix_xor_save_avx2(const salsa20_blk_t_avx2 *restrict Bin1,
 	const uint8_t * S0, * S1;
 	avx256i X0, X1, Y0, Y1;
 	size_t i;
-	//avx256i X_MASK;
 
 	if (!S)
 		return blockmix_salsa8_xor_save_avx2(Bin1, Bin2, Bout, r);
@@ -560,6 +603,11 @@ blockmix_xor_save_avx2(const salsa20_blk_t_avx2 *restrict Bin1,
 		PREFETCH_AVX2_OUT(&Bout[i], _MM_HINT_T0)
 	}
 	PREFETCH_AVX2_OUT(&Bout[r], _MM_HINT_T0);
+	//<add>
+	#if 1
+	PREFETCH_AVX2(&YMM_MASK, _MM_HINT_T0)
+	#endif
+	//</add>
 
 	/* X <-- B_{r1 - 1} */
 	XOR4_2_AVX2(Bin1[r].dq, Bin2[r].dq)
@@ -582,7 +630,8 @@ blockmix_xor_save_avx2(const salsa20_blk_t_avx2 *restrict Bin1,
 	/* B'_i <-- H(B'_i) */
 	SALSA20_8_AVX2(Bout[i].dq)
 
-	return X0.u32[0];
+	//return X0.u32[0];
+	return _mm256_extract_epi32( X0, 0);
 }
 
 #undef ARX_AVX2
@@ -1105,7 +1154,11 @@ yescrypt_kdf_avx2(const yescrypt_shared_t * shared, yescrypt_local_t * local,
 	uint8_t * B, * S;
 	salsa20_blk_t_avx2 * V, * XY;
 	uint8_t sha256[32];
-	YMM_MASK.u64[0] = YMM_MASK.u64[1] = YMM_MASK.u64[2] = YMM_MASK.u64[3] = S_MASK_AVX2;
+	YMM_MASK = _mm256_set_epi64x( S_MASK_AVX2, S_MASK_AVX2, S_MASK_AVX2, S_MASK_AVX2);
+	PERMUTE_OFFSET1 = _mm256_set_epi32(6, 5, 4, 7, 3, 2, 1, 0);
+	PERMUTE_OFFSET2 = _mm256_set_epi32(4, 7, 6, 5, 1, 0, 3, 2);
+	PERMUTE_OFFSET3 = _mm256_set_epi32(4, 7, 6, 5, 3, 2, 1, 0);
+	PERMUTE_OFFSET4 = _mm256_set_epi32(6, 5, 4, 7, 1, 0, 3, 2);
 
 	/*
 	 * YESCRYPT_PARALLEL_SMIX is a no-op at p = 1 for its intended purpose,
